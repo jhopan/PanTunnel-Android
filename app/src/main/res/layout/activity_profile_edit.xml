@@ -1,0 +1,114 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:background="@color/bg_root"
+    android:orientation="vertical">
+
+    <androidx.appcompat.widget.Toolbar
+        android:id="@+id/editToolbar"
+        style="@style/PanTunnelToolbar"
+        android:layout_width="match_parent"
+        android:layout_height="?attr/actionBarSize"
+        app:navigationIcon="?attr/homeAsUpIndicator"
+        app:title="Profil"
+        app:titleTextColor="@color/text_primary" />
+
+    <ScrollView
+        android:layout_width="match_parent"
+        android:layout_height="0dp"
+        android:layout_weight="1"
+        android:fillViewport="true">
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="vertical"
+            android:paddingHorizontal="20dp"
+            android:paddingTop="16dp"
+            android:paddingBottom="24dp">
+
+            <TextView style="@style/PanTunnelFieldLabel" android:layout_width="match_parent"
+                android:layout_height="wrap_content" android:text="@string/profile_name" />
+            <EditText
+                android:id="@+id/editName"
+                style="@style/PanTunnelField"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:hint="Kantor / Default"
+                android:inputType="textCapSentences" />
+
+            <TextView style="@style/PanTunnelFieldLabel" android:layout_width="match_parent"
+                android:layout_height="wrap_content" android:layout_marginTop="16dp"
+                android:text="@string/address" />
+            <EditText
+                android:id="@+id/editAddress"
+                style="@style/PanTunnelField"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:hint="example.com:443"
+                android:inputType="textUri" />
+
+            <TextView style="@style/PanTunnelFieldLabel" android:layout_width="match_parent"
+                android:layout_height="wrap_content" android:layout_marginTop="16dp"
+                android:text="@string/uuid" />
+            <EditText
+                android:id="@+id/editUuid"
+                style="@style/PanTunnelField"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:hint="xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+                android:inputType="textNoSuggestions" />
+
+            <TextView style="@style/PanTunnelFieldLabel" android:layout_width="match_parent"
+                android:layout_height="wrap_content" android:layout_marginTop="16dp"
+                android:text="@string/path" />
+            <EditText
+                android:id="@+id/editPath"
+                style="@style/PanTunnelField"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:hint="/vless"
+                android:inputType="textUri" />
+
+            <TextView style="@style/PanTunnelFieldLabel" android:layout_width="match_parent"
+                android:layout_height="wrap_content" android:layout_marginTop="16dp"
+                android:text="@string/sni" />
+            <EditText
+                android:id="@+id/editSni"
+                style="@style/PanTunnelField"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:hint="example.com"
+                android:inputType="textUri" />
+
+            <TextView style="@style/PanTunnelFieldLabel" android:layout_width="match_parent"
+                android:layout_height="wrap_content" android:layout_marginTop="16dp"
+                android:text="@string/host" />
+            <EditText
+                android:id="@+id/editHost"
+                style="@style/PanTunnelField"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:hint="example.com"
+                android:inputType="textUri" />
+
+            <TextView
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="16dp"
+                android:text="Kosongkan SNI/Host untuk memakai address. Hanya VLESS + WebSocket + TLS yang didukung."
+                android:textColor="@color/text_muted"
+                android:textSize="11sp" />
+
+            <Button
+                android:id="@+id/editSave"
+                style="@style/PanTunnelPrimaryButton"
+                android:layout_width="match_parent"
+                android:layout_height="52dp"
+                android:layout_marginTop="24dp"
+                android:text="@string/save" />
+        </LinearLayout>
+    </ScrollView>
+</LinearLayout>

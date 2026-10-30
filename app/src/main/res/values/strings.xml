@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">PanTunnel</string>
+    <string name="connect">CONNECT</string>
+    <string name="disconnect">DISCONNECT</string>
+    <string name="status_idle">Terputus</string>
+    <string name="traffic_placeholder">↓ 0 B   ↑ 0 B</string>
+    <string name="add_profile">+ Tambah profil</string>
+    <string name="untitled">Untitled</string>
+    <string name="profile_name">Nama Profil</string>
+    <string name="address">Address / Target Server</string>
+    <string name="uuid">UUID</string>
+    <string name="path">Path</string>
+    <string name="sni">SNI (Server Name Indication)</string>
+    <string name="host">Header Host</string>
+    <string name="save">SIMPAN</string>
+    <string name="cancel">BATAL</string>
+    <string name="delete">Hapus</string>
+    <string name="edit">Edit</string>
+    <string name="settings">Pengaturan</string>
+    <string name="about">About</string>
+</resources>

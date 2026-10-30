@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<menu xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto">
+    <item
+        android:id="@+id/action_import_clipboard"
+        android:title="Import dari clipboard"
+        app:showAsAction="never" />
+    <item
+        android:id="@+id/action_import_file"
+        android:title="Import file .pantunnel"
+        app:showAsAction="never" />
+    <item
+        android:id="@+id/action_export_clipboard"
+        android:title="Export ke clipboard"
+        app:showAsAction="never" />
+    <item
+        android:id="@+id/action_export_license"
+        android:title="Export locked config"
+        app:showAsAction="never" />
+    <item
+        android:id="@+id/action_settings"
+        android:title="Pengaturan"
+        app:showAsAction="never" />
+    <item
+        android:id="@+id/action_clear"
+        android:title="Clear config"
+        app:showAsAction="never" />
+    <item
+        android:id="@+id/action_about"
+        android:title="About"
+        app:showAsAction="never" />
+</menu>

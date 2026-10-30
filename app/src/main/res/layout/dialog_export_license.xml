@@ -1,0 +1,82 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:background="@color/bg_elevated"
+    android:orientation="vertical"
+    android:padding="24dp">
+
+    <TextView style="@style/PanTunnelFieldLabel" android:layout_width="match_parent"
+        android:layout_height="wrap_content" android:text="Nama config" />
+    <EditText
+        android:id="@+id/licName"
+        style="@style/PanTunnelField"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:hint="Paket Premium - Budi"
+        android:inputType="textCapSentences" />
+
+    <TextView style="@style/PanTunnelFieldLabel" android:layout_width="match_parent"
+        android:layout_height="wrap_content" android:layout_marginTop="16dp"
+        android:text="HWID pembeli (24 karakter)" />
+    <EditText
+        android:id="@+id/licHwid"
+        style="@style/PanTunnelField"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:hint="24-character HWID"
+        android:inputType="textCapCharacters|textNoSuggestions" />
+
+    <TextView style="@style/PanTunnelFieldLabel" android:layout_width="match_parent"
+        android:layout_height="wrap_content" android:layout_marginTop="16dp"
+        android:text="Masa berlaku (kosong = selamanya)" />
+    <Button
+        android:id="@+id/licExpiry"
+        android:layout_width="match_parent"
+        android:layout_height="46dp"
+        android:layout_marginTop="6dp"
+        android:backgroundTint="@color/bg_surface"
+        android:gravity="start|center_vertical"
+        android:paddingHorizontal="12dp"
+        android:text="dd/mm/yyyy (kosong = selamanya)"
+        android:textAllCaps="false"
+        android:textColor="@color/text_primary"
+        android:textSize="13sp" />
+
+    <CheckBox
+        android:id="@+id/licLock"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="16dp"
+        android:buttonTint="@color/accent"
+        android:checked="true"
+        android:text="Kunci config (sembunyikan config di HP pembeli)"
+        android:textColor="@color/text_secondary"
+        android:textSize="13sp" />
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="18dp"
+        android:gravity="end"
+        android:orientation="horizontal">
+
+        <Button
+            android:id="@+id/licCancel"
+            style="@style/Widget.AppCompat.Button.Borderless"
+            android:layout_width="wrap_content"
+            android:layout_height="44dp"
+            android:paddingHorizontal="16dp"
+            android:text="@string/cancel"
+            android:textColor="@color/text_secondary" />
+
+        <Button
+            android:id="@+id/licCreate"
+            style="@style/PanTunnelPrimaryButton"
+            android:layout_width="wrap_content"
+            android:layout_height="44dp"
+            android:layout_marginStart="8dp"
+            android:paddingHorizontal="20dp"
+            android:text="BUAT FILE" />
+    </LinearLayout>
+</LinearLayout>

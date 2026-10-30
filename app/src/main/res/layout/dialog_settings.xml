@@ -1,0 +1,133 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:background="@color/bg_elevated">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="vertical"
+        android:padding="24dp">
+
+        <TextView
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Pengaturan"
+            android:textColor="@color/text_primary"
+            android:textSize="18sp"
+            android:textStyle="bold" />
+
+        <CheckBox
+            android:id="@+id/setPing"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="16dp"
+            android:buttonTint="@color/accent"
+            android:text="Keep-alive HTTP ping saat terhubung"
+            android:textColor="@color/text_secondary"
+            android:textSize="13sp" />
+
+        <TextView style="@style/PanTunnelFieldLabel" android:layout_width="match_parent"
+            android:layout_height="wrap_content" android:layout_marginTop="14dp"
+            android:text="Interval ping (detik)" />
+        <EditText
+            android:id="@+id/setPingInterval"
+            style="@style/PanTunnelField"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="3"
+            android:inputType="number" />
+
+        <TextView style="@style/PanTunnelFieldLabel" android:layout_width="match_parent"
+            android:layout_height="wrap_content" android:layout_marginTop="14dp"
+            android:text="URL ping" />
+        <EditText
+            android:id="@+id/setPingUrl"
+            style="@style/PanTunnelField"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:hint="https://connectivitycheck.gstatic.com/generate_204"
+            android:inputType="textUri" />
+
+        <CheckBox
+            android:id="@+id/setTraffic"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="14dp"
+            android:buttonTint="@color/accent"
+            android:text="Tampilkan traffic meter"
+            android:textColor="@color/text_secondary"
+            android:textSize="13sp" />
+
+        <CheckBox
+            android:id="@+id/setAutoReconnect"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:buttonTint="@color/accent"
+            android:text="Auto-reconnect saat koneksi putus"
+            android:textColor="@color/text_secondary"
+            android:textSize="13sp" />
+
+        <CheckBox
+            android:id="@+id/setDebug"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:buttonTint="@color/accent"
+            android:text="Mode debug (tampilkan log koneksi)"
+            android:textColor="@color/text_secondary"
+            android:textSize="13sp" />
+
+        <TextView style="@style/PanTunnelFieldLabel" android:layout_width="match_parent"
+            android:layout_height="wrap_content" android:layout_marginTop="16dp"
+            android:text="Device HWID" />
+        <TextView
+            android:id="@+id/setHwid"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="6dp"
+            android:background="@color/bg_status"
+            android:fontFamily="monospace"
+            android:padding="10dp"
+            android:textColor="@color/accent_cyan"
+            android:textIsSelectable="true"
+            android:textSize="13sp" />
+
+        <Button
+            android:id="@+id/setCopyHwid"
+            android:layout_width="match_parent"
+            android:layout_height="44dp"
+            android:layout_marginTop="8dp"
+            android:backgroundTint="@color/bg_surface"
+            android:text="Copy HWID"
+            android:textColor="@color/text_primary" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:layout_marginTop="18dp"
+            android:gravity="end"
+            android:orientation="horizontal">
+
+            <Button
+                android:id="@+id/setCancel"
+                style="@style/Widget.AppCompat.Button.Borderless"
+                android:layout_width="wrap_content"
+                android:layout_height="44dp"
+                android:paddingHorizontal="16dp"
+                android:text="@string/cancel"
+                android:textColor="@color/text_secondary" />
+
+            <Button
+                android:id="@+id/setDone"
+                style="@style/PanTunnelPrimaryButton"
+                android:layout_width="wrap_content"
+                android:layout_height="44dp"
+                android:layout_marginStart="8dp"
+                android:paddingHorizontal="20dp"
+                android:text="@string/save" />
+        </LinearLayout>
+    </LinearLayout>
+</ScrollView>
