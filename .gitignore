@@ -16,3 +16,7 @@ captures/
 
 # local verification screenshots
 .shots/
+
+# Release keystore + its backup live only on disk, never in the repo.
+backup/
+.pw.tmp
