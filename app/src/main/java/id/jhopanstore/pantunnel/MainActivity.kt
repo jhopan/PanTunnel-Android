@@ -75,6 +75,7 @@ class MainActivity : AppCompatActivity() {
     private var lastSampleAt = 0L
 
     private var pendingLicensePayload: String? = null
+    private var pendingExportPayload: String? = null
 
     // ------------------------------------------------------------------ launchers
 
@@ -92,7 +93,30 @@ class MainActivity : AppCompatActivity() {
         registerForActivityResult(ActivityResultContracts.CreateDocument(JVS_MIME)) { uri ->
             val payload = pendingLicensePayload
             pendingLicensePayload = null
-            if (uri != null && payload != null) writeText(uri, payload, "Locked config diexport")
+            if (uri == null) return@registerForActivityResult
+            if (payload != null) {
+                writeText(uri, payload, "Locked config diexport")
+            } else {
+                toast("Export gagal: data lisensi hilang, coba lagi")
+            }
+        }
+
+    /**
+     * Plain (unencrypted) .pantunnel: just the vless:// link, importable on any device.
+     * The payload is recomputed from the active profile instead of trusting a field, so a
+     * configuration change while the file picker is open cannot produce an empty file.
+     */
+    private val exportFileLauncher =
+        registerForActivityResult(ActivityResultContracts.CreateDocument(JVS_MIME)) { uri ->
+            if (uri == null) return@registerForActivityResult
+            val payload = pendingExportPayload
+                ?: runCatching { activeUri() }.getOrNull()
+            pendingExportPayload = null
+            if (payload.isNullOrBlank()) {
+                toast("Export gagal: tidak ada config aktif")
+            } else {
+                writeText(uri, payload, "File .pantunnel diexport")
+            }
         }
 
     private val editProfileLauncher =
@@ -160,6 +184,7 @@ class MainActivity : AppCompatActivity() {
         R.id.action_import_clipboard -> { importFromClipboard(); true }
         R.id.action_import_file -> { openImportFile(); true }
         R.id.action_export_clipboard -> { copyToClipboard(activeUri(), "Link dicopy"); true }
+        R.id.action_export_file -> { exportPlainFile(); true }
         R.id.action_export_license -> { showExportLicenseDialog(); true }
         R.id.action_settings -> { showSettingsDialog(); true }
         R.id.action_clear -> { confirmClearConfig(); true }
@@ -573,22 +598,71 @@ class MainActivity : AppCompatActivity() {
         toast("Lisensi terpasang" + if (incoming.lock) " (config terkunci)" else "")
     }
 
+    /**
+     * Plain `.pantunnel` export: the raw `vless://` link, nothing encrypted.
+     * Works on any device — unlike "Export locked config" which is bound to one HWID.
+     */
+    private fun exportPlainFile() {
+        val uri = runCatching { activeUri() }.getOrElse {
+            toast(it.message ?: "Config tidak valid")
+            return
+        }
+        if (uri.isBlank()) { toast("Belum ada config untuk diexport"); return }
+        runCatching { VlessParser.parse(uri) }.onFailure {
+            toast(TunnelDiagnostics.fromConfigError(it.message))
+            return
+        }
+        pendingExportPayload = uri
+        val name = profiles.activeProfile()?.displayName
+            ?.replace(Regex("[^A-Za-z0-9._-]"), "-")
+            ?.takeIf { it.isNotBlank() }
+            ?: "pantunnel"
+        exportFileLauncher.launch("$name.pantunnel")
+    }
+
     private fun openImportFile() {
         runCatching { importFileLauncher.launch(arrayOf(JVS_MIME)) }
             .onFailure { importFileLauncher.launch(arrayOf("text/plain", "*/*")) }
     }
 
+    /**
+     * Reads the whole file, not just line 1: a shared note may carry blank lines or a
+     * multi-line paste before the link, and a locked payload is a single long line anyway.
+     */
     private fun readImport(uri: Uri) {
-        runCatching {
-            contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readLine() }
-        }.getOrNull()?.takeIf { it.isNotBlank() }?.let { importText(it.trim()) }
-            ?: toast("Import gagal")
+        val text = runCatching {
+            contentResolver.openInputStream(uri)?.bufferedReader()?.use { it.readText() }
+        }.getOrNull()?.trim()
+
+        if (text.isNullOrBlank()) { toast("File kosong"); return }
+
+        val candidate = text.lineSequence()
+            .map { it.trim() }
+            .firstOrNull { it.startsWith("vless://", true) || LicenseCodec.isEncoded(it) }
+            ?: text
+
+        importText(candidate)
     }
 
+    /**
+     * Writes [text] to a SAF uri and reports failure honestly.
+     *
+     * A null stream from openOutputStream() used to look like success (`?.use{}` just returns
+     * null without throwing), which produced a 0-byte file with an "exported" toast. Now a
+     * missing stream or a short write is an explicit failure.
+     */
     private fun writeText(uri: Uri, text: String, successMessage: String) {
-        runCatching {
-            contentResolver.openOutputStream(uri)?.use { it.write(text.toByteArray()) }
-        }.onSuccess { toast(successMessage) }.onFailure { toast("Export gagal") }
+        val bytes = text.toByteArray(Charsets.UTF_8)
+        val written = runCatching {
+            val stream = contentResolver.openOutputStream(uri, "wt")
+                ?: error("Tidak bisa membuka file tujuan")
+            stream.use { it.write(bytes); it.flush() }
+            bytes.size
+        }.getOrElse {
+            toast("Export gagal: ${it.message ?: it.javaClass.simpleName}")
+            return
+        }
+        toast(if (written > 0) successMessage else "Export gagal: file kosong")
     }
 
     private fun copyToClipboard(text: String, message: String) {
