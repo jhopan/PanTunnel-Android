@@ -400,8 +400,22 @@ class PanVpnService : VpnService() {
         // Network/screen changed: verify sooner than the steady-state interval.
         scope.launch {
             delay(NETWORK_EVENT_PROBE_DELAY_MS)
-            if (synchronized(lock) { running } && verifyTunnel() == null) {
+            if (!synchronized(lock) { running }) return@launch
+            if (verifyTunnel() == null) {
                 synchronized(lock) { failedProbes = 0 }
+                return@launch
+            }
+            // The network just changed and the tunnel cannot pass traffic: count it, drop to the
+            // short probe cadence, and restart the loop so that cadence applies now instead of
+            // after the pending stable interval (was up to 90 s of a green "Terhubung" while
+            // every keep-alive ping was already failing).
+            synchronized(lock) {
+                failedProbes += 1
+                healthyStable = false
+            }
+            if (probeJob?.isActive == true) {
+                probeJob?.cancel()
+                startProbeLoop()
             }
         }
     }
