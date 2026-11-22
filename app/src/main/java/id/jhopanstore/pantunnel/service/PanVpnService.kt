@@ -13,6 +13,7 @@ import android.net.ConnectivityManager
 import android.net.LinkProperties
 import android.net.Network
 import android.net.NetworkCapabilities
+import android.net.NetworkRequest
 import android.net.VpnService
 import android.os.Build
 import android.os.ParcelFileDescriptor
@@ -100,9 +101,14 @@ class PanVpnService : VpnService() {
     private var tun: ParcelFileDescriptor? = null
     private var interfaceListener: InterfaceUpdateListener? = null
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
+    /** Watches the not-VPN network, which is the only one that can disappear under the tunnel. */
+    private var upstreamCallback: ConnectivityManager.NetworkCallback? = null
 
     private var running = false
     private var connecting = false
+    /** True while the published state is the "waiting for network" one, so it can be lifted once a
+     *  probe really passes again. */
+    private var degraded = false
     private var failedProbes = 0
     private var autoReconnects = 0
     private var terminalFailure = false
@@ -198,6 +204,7 @@ class PanVpnService : VpnService() {
             autoReconnects = 0
             terminalFailure = false
             healthyStable = false
+            degraded = false
         }
         logLines.clear()
         clearStatusLines()
@@ -292,6 +299,7 @@ class PanVpnService : VpnService() {
             }
             goForeground("Terhubung")
             publish(TunnelState.Connected, "")
+            synchronized(lock) { degraded = false }
             resetMeter()
 
             synchronized(lock) { failedProbes = 0; autoReconnects = 0 }
@@ -347,16 +355,26 @@ class PanVpnService : VpnService() {
                 val failure = probeWithRetry()
                 if (failure == null) {
                     val decision = ProbePolicy.onSuccess()
-                    synchronized(lock) {
+                    val wasDegraded = synchronized(lock) {
                         failedProbes = decision.failedProbes
                         autoReconnects = decision.autoReconnects
                         healthyStable = true
+                        val was = degraded
+                        degraded = false
+                        was
                     }
                     transientMonitor.reset()
+                    if (wasDegraded) {
+                        // Traffic flows again after a network gap: replace the waiting message instead
+                        // of leaving it on screen. A real 204 just came back, so this is honest.
+                        goForeground("Terhubung")
+                        publish(TunnelState.Connected, "")
+                    }
                     writeMeter()
                     continue
                 }
 
+                val offline = !hasDefaultNetwork()
                 val decision = synchronized(lock) {
                     val d = ProbePolicy.onFailure(
                         failedProbes = failedProbes,
@@ -367,7 +385,9 @@ class PanVpnService : VpnService() {
                     failedProbes = d.failedProbes
                     autoReconnects = d.autoReconnects
                     if (d.markUnstable) healthyStable = false
-                    if (d.verdict == ProbeVerdict.RECONNECT) {
+                    // With no network at all, spending a reconnect only ends in a terminal Failed
+                    // the user has to clear by hand; waiting recovers on its own.
+                    if (d.verdict == ProbeVerdict.RECONNECT && !offline) {
                         running = false
                         connecting = true
                     }
@@ -381,9 +401,13 @@ class PanVpnService : VpnService() {
                         continue
                     }
                     ProbeVerdict.RECONNECT -> {
-                        log("Reconnect otomatis ${decision.autoReconnects}/$MAX_AUTO_RECONNECTS…")
-                        goForeground("Menyambung ulang…")
-                        publish(TunnelState.Reconnecting, "Menyambung ulang…")
+                        if (offline) {
+                            markWaitingForNetwork()
+                            continue
+                        }
+                        log("Reconnect otomatis ${decision.autoReconnects}/$MAX_AUTO_RECONNECTS...")
+                        goForeground("Menyambung ulang...")
+                        publish(TunnelState.Reconnecting, "Menyambung ulang...")
                         reconnect()
                         break
                     }
@@ -402,7 +426,16 @@ class PanVpnService : VpnService() {
             delay(NETWORK_EVENT_PROBE_DELAY_MS)
             if (!synchronized(lock) { running }) return@launch
             if (verifyTunnel() == null) {
-                synchronized(lock) { failedProbes = 0 }
+                val wasDegraded = synchronized(lock) {
+                    failedProbes = 0
+                    val was = degraded
+                    degraded = false
+                    was
+                }
+                if (wasDegraded) {
+                    goForeground("Terhubung")
+                    publish(TunnelState.Connected, "")
+                }
                 return@launch
             }
             // The network just changed and the tunnel cannot pass traffic: count it, drop to the
@@ -413,11 +446,37 @@ class PanVpnService : VpnService() {
                 failedProbes += 1
                 healthyStable = false
             }
+            if (!hasDefaultNetwork()) markWaitingForNetwork()
             if (probeJob?.isActive == true) {
                 probeJob?.cancel()
                 startProbeLoop()
             }
         }
+    }
+
+    /** True when a non-VPN network can carry traffic. `activeNetwork` alone is not enough: with our
+     *  own VPN up it *is* the VPN, so it stays non-null while the device has no upstream at all. */
+    private fun hasDefaultNetwork(): Boolean = runCatching {
+        val manager = getSystemService(ConnectivityManager::class.java) ?: return@runCatching true
+        manager.allNetworks.any { network ->
+            val caps = manager.getNetworkCapabilities(network) ?: return@any false
+            caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
+                !caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN)
+        }
+    }.getOrDefault(true)
+
+    /**
+     * Publishes "waiting for network" once per outage. The tunnel cannot be up while the device has
+     * no network at all, so staying green here was the one remaining dishonest state.
+     */
+    private fun markWaitingForNetwork() {
+        val first = synchronized(lock) {
+            if (!running || degraded) false else { degraded = true; true }
+        }
+        if (!first) return
+        log("Tidak ada jaringan — menunggu koneksi")
+        goForeground("Menunggu jaringan...")
+        publish(TunnelState.Reconnecting, "Tidak ada jaringan — menunggu koneksi...")
     }
 
     private fun reconnect() {
@@ -651,6 +710,23 @@ class PanVpnService : VpnService() {
         runCatching { manager.registerDefaultNetworkCallback(callback) }
             .onFailure { Log.w(TAG, "network callback", it) }
         networkCallback = callback
+        // Once our own VPN is up it *is* the default network, so the callback above stops seeing the
+        // underlying Wi-Fi/cellular. Losing that upstream never reached the service, which is why a
+        // dead tunnel could stay green for minutes. Watch the not-VPN network explicitly.
+        val upstream = object : ConnectivityManager.NetworkCallback() {
+            override fun onAvailable(network: Network) = triggerProbeSoon()
+            override fun onLost(network: Network) = triggerProbeSoon()
+        }
+        runCatching {
+            manager.registerNetworkCallback(
+                NetworkRequest.Builder()
+                    .addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                    .addCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN)
+                    .build(),
+                upstream,
+            )
+        }.onFailure { Log.w(TAG, "upstream callback", it) }
+        upstreamCallback = upstream
         manager.activeNetwork?.let { reportNetwork(it) }
     }
 
@@ -660,7 +736,13 @@ class PanVpnService : VpnService() {
                 getSystemService(ConnectivityManager::class.java)?.unregisterNetworkCallback(callback)
             }
         }
+        upstreamCallback?.let { callback ->
+            runCatching {
+                getSystemService(ConnectivityManager::class.java)?.unregisterNetworkCallback(callback)
+            }
+        }
         networkCallback = null
+        upstreamCallback = null
         interfaceListener = null
     }
 
@@ -751,6 +833,12 @@ class PanVpnService : VpnService() {
      * those flows and they are re-established on a new socket.
      */
     private fun reconnectAfterTransportFailure() {
+        if (!hasDefaultNetwork()) {
+            // Dead transport because the device lost its network: waiting is the honest state, and a
+            // reconnect here would only burn the budget and end in a terminal Failed.
+            markWaitingForNetwork()
+            return
+        }
         val proceed = synchronized(lock) {
             if (!running || reconnecting || connecting) return@synchronized false
             reconnecting = true
