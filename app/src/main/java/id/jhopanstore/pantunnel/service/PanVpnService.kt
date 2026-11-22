@@ -192,6 +192,17 @@ class PanVpnService : VpnService() {
             return START_NOT_STICKY
         }
 
+        if (!hasIpv4Upstream()) {
+            // The TUN only claims IPv4 and every DNS server is asked for A records, so an IPv6-only
+            // upstream (no CLAT/NAT64) cannot carry the tunnel. Saying so beats a DNS timeout.
+            publish(
+                TunnelState.Failed,
+                "Jaringan ini IPv6-only — PanTunnel butuh IPv4. Pakai Wi-Fi/data yang punya IPv4.",
+            )
+            stopSelf()
+            return START_NOT_STICKY
+        }
+
         val settings = settingsRepo.load()
         profileName = profiles.activeProfile()?.displayName.orEmpty()
 
@@ -462,6 +473,28 @@ class PanVpnService : VpnService() {
             val caps = manager.getNetworkCapabilities(network) ?: return@any false
             caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) &&
                 !caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN)
+        }
+    }.getOrDefault(true)
+
+    /**
+     * True when the upstream can reach IPv4 hosts. The TUN only claims `0.0.0.0/0` and every DNS
+     * server is queried for A records, so an IPv6-only network without CLAT/NAT64 (some carriers)
+     * cannot carry the tunnel at all.
+     */
+    private fun hasIpv4Upstream(): Boolean = runCatching {
+        val manager = getSystemService(ConnectivityManager::class.java) ?: return@runCatching true
+        manager.allNetworks.any { network ->
+            val caps = manager.getNetworkCapabilities(network) ?: return@any false
+            if (!caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) ||
+                caps.hasTransport(NetworkCapabilities.TRANSPORT_VPN)
+            ) {
+                return@any false
+            }
+            val link = manager.getLinkProperties(network) ?: return@any false
+            link.routes.any { route ->
+                val prefix = route.destination ?: return@any false
+                prefix.address is Inet4Address && prefix.prefixLength == 0
+            }
         }
     }.getOrDefault(true)
 

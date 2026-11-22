@@ -281,6 +281,8 @@ Invariant lain yang tidak boleh dilanggar:
 | Layar mati → probe/ping skip | Hemat baterai; jangan diubah jadi probe terus |
 | Traffic meter reset hanya saat transisi ke `Connected` | Reset tiap ping membaca 0 B/s |
 | Paket sendiri di luar tunnel (kedua mode split) | Kalau di dalam, dial core ke server berbalik ke proxy → timeout |
+| Jaringan hilang → status `Menunggu jaringan`, bukan `Connected` | Jaringan naik lagi → probe lolos → `Connected` otomatis (terukur: degrade 4 s, pulih 11 s) |
+| Budget auto-reconnect tidak dibakar saat device offline | Reconnect tanpa jaringan hanya berakhir `Failed` yang harus di-tap user |
 
 ---
 
@@ -295,6 +297,7 @@ Invariant lain yang tidak boleh dilanggar:
 | File `.pantunnel` 0 byte | `openOutputStream()` mengembalikan `null` | Sudah ditangani; pakai versi terbaru |
 | Tap link `vless://` tidak membuka app | Deep link belum terdaftar | Sudah terdaftar di manifest; uji dari browser/Telegram |
 | Split tunnel hanya menampilkan app sistem | `QUERY_ALL_PACKAGES` hilang (Android 11+) | Jangan hapus izin itu |
+| "Jaringan ini IPv6-only — PanTunnel butuh IPv4" | TUN hanya klaim `0.0.0.0/0` + DNS `ipv4_only`; operator IPv6-only tanpa CLAT/NAT64 tidak bisa dipakai | Pindah ke Wi-Fi/jaringan yang punya IPv4 |
 | Export log tidak ada UUID | Redaksi `DiagnosticsReport` | Memang disengaja |
 
 Performa yang dijaga: RAM idle < 120 MB PSS, APK arm64 < 10 MB, connect < 5 detik, tanpa wake lock.
