@@ -20,3 +20,12 @@ captures/
 # Release keystore + its backup live only on disk, never in the repo.
 backup/
 .pw.tmp
+
+# Local agent instructions — never committed.
+AGENTS.md
+
+# temporary sing-box WSL test
+.wsltest/
+
+# locally built release artifacts (uploaded to GitHub Releases instead)
+/dist/

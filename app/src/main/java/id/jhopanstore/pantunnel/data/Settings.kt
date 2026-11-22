@@ -2,6 +2,7 @@ package id.jhopanstore.pantunnel.data
 
 import android.content.Context
 import android.content.SharedPreferences
+import id.jhopanstore.pantunnel.core.SplitTunnel
 
 /** User-tunable behaviour, persisted next to the profiles. */
 data class Settings(
@@ -9,8 +10,8 @@ data class Settings(
     val httpPingIntervalSeconds: Int = 3,
     val httpPingUrl: String = DEFAULT_PING_URL,
     val showTraffic: Boolean = true,
-    val debugMode: Boolean = false,
     val autoReconnect: Boolean = true,
+    val splitTunnel: SplitTunnel = SplitTunnel(),
 ) {
     val pingInterval: Int get() = httpPingIntervalSeconds.coerceAtLeast(1)
 
@@ -30,8 +31,12 @@ class SettingsRepository(context: Context) {
         httpPingUrl = prefs.getString(KEY_PING_URL, null)?.takeIf { it.isNotBlank() }
             ?: Settings.DEFAULT_PING_URL,
         showTraffic = prefs.getBoolean(KEY_SHOW_TRAFFIC, true),
-        debugMode = prefs.getBoolean(KEY_DEBUG, false),
         autoReconnect = prefs.getBoolean(KEY_AUTO_RECONNECT, true),
+        splitTunnel = SplitTunnel(
+            enabled = prefs.getBoolean(KEY_SPLIT_ENABLED, false),
+            allowMode = prefs.getBoolean(KEY_SPLIT_ALLOW_MODE, true),
+            packages = prefs.getStringSet(KEY_SPLIT_PACKAGES, emptySet()).orEmpty(),
+        ),
     )
 
     fun save(settings: Settings) {
@@ -40,8 +45,10 @@ class SettingsRepository(context: Context) {
             .putInt(KEY_PING_INTERVAL, settings.pingInterval)
             .putString(KEY_PING_URL, settings.httpPingUrl)
             .putBoolean(KEY_SHOW_TRAFFIC, settings.showTraffic)
-            .putBoolean(KEY_DEBUG, settings.debugMode)
             .putBoolean(KEY_AUTO_RECONNECT, settings.autoReconnect)
+            .putBoolean(KEY_SPLIT_ENABLED, settings.splitTunnel.enabled)
+            .putBoolean(KEY_SPLIT_ALLOW_MODE, settings.splitTunnel.allowMode)
+            .putStringSet(KEY_SPLIT_PACKAGES, settings.splitTunnel.packages)
             .apply()
     }
 
@@ -56,11 +63,12 @@ class SettingsRepository(context: Context) {
         const val KEY_PING_INTERVAL = "http_ping_interval"
         const val KEY_PING_URL = "http_ping_url"
         const val KEY_SHOW_TRAFFIC = "show_traffic"
-        const val KEY_DEBUG = "debug_mode"
         const val KEY_AUTO_RECONNECT = "auto_reconnect"
+        const val KEY_SPLIT_ENABLED = "split_enabled"
+        const val KEY_SPLIT_ALLOW_MODE = "split_allow_mode"
+        const val KEY_SPLIT_PACKAGES = "split_packages"
 
-        /** One-time onboarding flags (battery guard / autostart prompt). */
+        /** One-time onboarding flag for the battery guard prompt. */
         const val KEY_BATTERY_ACK = "battery_optimization_acknowledged"
-        const val KEY_AUTOSTART_DONE = "autostart_done"
     }
 }

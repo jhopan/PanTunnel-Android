@@ -20,7 +20,15 @@ import android.os.Process
 import android.util.Log
 import id.jhopanstore.pantunnel.MainActivity
 import id.jhopanstore.pantunnel.R
+import id.jhopanstore.pantunnel.core.CacheJanitor
+import id.jhopanstore.pantunnel.core.ErrorKind
+import id.jhopanstore.pantunnel.core.LogBuffer
+import id.jhopanstore.pantunnel.core.NetworkErrorClassifier
+import id.jhopanstore.pantunnel.core.ProbePolicy
+import id.jhopanstore.pantunnel.core.TransientErrorMonitor
+import id.jhopanstore.pantunnel.core.ProbeVerdict
 import id.jhopanstore.pantunnel.core.SingboxConfig
+import id.jhopanstore.pantunnel.core.VpnAppRules
 import id.jhopanstore.pantunnel.core.TunnelDiagnostics
 import id.jhopanstore.pantunnel.core.TunnelState
 import id.jhopanstore.pantunnel.core.VlessConfig
@@ -43,6 +51,8 @@ import java.text.SimpleDateFormat
 import java.util.ArrayDeque
 import java.util.Date
 import java.util.Locale
+import kotlinx.coroutines.CoroutineExceptionHandler
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -62,7 +72,24 @@ import kotlinx.coroutines.launch
  */
 class PanVpnService : VpnService() {
 
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    /**
+     * Without a handler, an exception inside a coroutine vanishes silently: the service keeps
+     * reporting "Connected" while probe/ping jobs are already dead. That is exactly the
+     * "connected but no internet" state users cannot diagnose, so every uncaught failure is
+     * surfaced as a real Failed state.
+     */
+    private val exceptionHandler = CoroutineExceptionHandler { _, error ->
+        Log.e(TAG, "uncaught coroutine failure", error)
+        log("Kesalahan internal: ${error.javaClass.simpleName}")
+        synchronized(lock) {
+            connecting = false
+            running = false
+        }
+        runCatching { core?.close() }
+        publish(TunnelState.Failed, TunnelDiagnostics.fromThrowable(error))
+    }
+
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO + exceptionHandler)
     private val lock = Any()
 
     private lateinit var statusStore: TunnelStatusStore
@@ -85,11 +112,17 @@ class PanVpnService : VpnService() {
     private var pingJob: Job? = null
     private var heartbeatJob: Job? = null
 
-    /** Debug-only connection steps (visible when debug mode is on). */
-    private val logLines = ArrayDeque<String>()
+    /** Core events. Self-expiring and bounded, so old errors cannot masquerade as live ones. */
+    private val logLines = LogBuffer(MAX_LOG_LINES)
 
     /** Keep-alive lines: always rendered, because they are the user's proof of life. */
-    private val statusLines = ArrayDeque<String>()
+    private val statusLines = LogBuffer(MAX_PING_LINES)
+
+    /** Counts dead-connection errors; a burst means the transport died under the live flows. */
+    private val transientMonitor = TransientErrorMonitor()
+
+    private var lastLogWriteAt = 0L
+    private var reconnecting = false
 
     private var baseState: TunnelState = TunnelState.Idle
     private var baseDetail = ""
@@ -114,6 +147,10 @@ class PanVpnService : VpnService() {
 
         createNotificationChannel()
 
+        // sing-box never trims cache.db; drop it before it becomes invisible bloat.
+        val pruned = CacheJanitor.pruneIfOversized(filesDir)
+        if (pruned > 0) Log.i(TAG, "pruned oversized cache.db (${pruned / 1024} KB)")
+
         runCatching {
             Libbox.setup(SetupOptions().apply { basePath = filesDir.absolutePath })
         }.onFailure { Log.e(TAG, "libbox setup failed", it) }
@@ -130,7 +167,7 @@ class PanVpnService : VpnService() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_STOP) {
-            disconnect(userInitiated = true)
+            disconnect()
             return START_NOT_STICKY
         }
 
@@ -174,7 +211,7 @@ class PanVpnService : VpnService() {
     }
 
     override fun onRevoke() {
-        disconnect(userInitiated = false)
+        disconnect()
         super.onRevoke()
     }
 
@@ -211,7 +248,7 @@ class PanVpnService : VpnService() {
             if (dialAddress != original.address) log("DNS ${original.address} → $dialAddress")
 
             val config = original.copy(address = dialAddress)
-            val json = SingboxConfig.build(config, filesDir.absolutePath, settings.debugMode)
+            val json = SingboxConfig.build(config, filesDir.absolutePath, verboseLogging = false)
             Libbox.checkConfig(json)
             log("Config sing-box valid")
 
@@ -229,6 +266,7 @@ class PanVpnService : VpnService() {
                 connecting = false
                 running = true
             }
+            synchronized(lock) { reconnecting = false }
             log("Core sing-box berjalan (${coreVersion()})")
 
             goForeground("Memeriksa internet…")
@@ -243,13 +281,27 @@ class PanVpnService : VpnService() {
             }
 
             logLines.clear()
+            // Re-check right before announcing: a DISCONNECT that lands between the check above
+            // and here used to be overwritten by this publish, leaving the card stuck on
+            // "Terhubung" with a service that was already gone.
+            val stillWanted = synchronized(lock) { running && !connecting }
+            if (!stillWanted) {
+                log("Dibatalkan pengguna")
+                closeCoreLocked()
+                return
+            }
             goForeground("Terhubung")
             publish(TunnelState.Connected, "")
             resetMeter()
 
             synchronized(lock) { failedProbes = 0; autoReconnects = 0 }
-            startProbeLoop(settings)
+            startProbeLoop()
             startPingLoop(settings)
+        } catch (cancelled: CancellationException) {
+            // The scope was torn down (DISCONNECT, stopSelf, service restart). Reporting this as a
+            // connection failure produced a user-facing "JobCancellationException — cek server,
+            // port, path" even though nothing was wrong with the profile.
+            throw cancelled
         } catch (error: Throwable) {
             Log.e(TAG, "connect failed", error)
             fail(TunnelDiagnostics.fromThrowable(error))
@@ -266,6 +318,7 @@ class PanVpnService : VpnService() {
             goForeground("Memeriksa internet… ($attempt/$PROBE_ATTEMPTS)")
             when (val result = probe.check(HEALTH_URL)) {
                 is ProbeClient.Result.Success -> {
+                    transientMonitor.reset()
                     log("Probe OK: HTTP ${result.code} (${result.elapsedMs} ms)")
                     return null
                 }
@@ -282,7 +335,7 @@ class PanVpnService : VpnService() {
         return last
     }
 
-    private fun startProbeLoop(settings: Settings) {
+    private fun startProbeLoop() {
         probeJob?.cancel()
         probeJob = scope.launch {
             while (isActive) {
@@ -291,35 +344,53 @@ class PanVpnService : VpnService() {
                 if (!isActive) break
                 val healthy = synchronized(lock) { running }
                 if (!healthy) break
-                val failure = verifyTunnel()
+                val failure = probeWithRetry()
                 if (failure == null) {
-                    synchronized(lock) { failedProbes = 0; autoReconnects = 0; healthyStable = true }
+                    val decision = ProbePolicy.onSuccess()
+                    synchronized(lock) {
+                        failedProbes = decision.failedProbes
+                        autoReconnects = decision.autoReconnects
+                        healthyStable = true
+                    }
+                    transientMonitor.reset()
                     writeMeter()
                     continue
                 }
-                val shouldReconnect = synchronized(lock) {
-                    healthyStable = false
-                    failedProbes++
-                    if (failedProbes >= PROBE_FAIL_LIMIT && autoReconnects < MAX_AUTO_RECONNECTS) {
-                        failedProbes = 0
-                        autoReconnects++
+
+                val decision = synchronized(lock) {
+                    val d = ProbePolicy.onFailure(
+                        failedProbes = failedProbes,
+                        autoReconnects = autoReconnects,
+                        limit = PROBE_FAIL_LIMIT,
+                        maxReconnects = MAX_AUTO_RECONNECTS,
+                    )
+                    failedProbes = d.failedProbes
+                    autoReconnects = d.autoReconnects
+                    if (d.markUnstable) healthyStable = false
+                    if (d.verdict == ProbeVerdict.RECONNECT) {
                         running = false
                         connecting = true
-                        true
-                    } else {
-                        failedProbes = 0
-                        false
                     }
+                    d
                 }
-                if (shouldReconnect) {
-                    log("Reconnect otomatis ${autoReconnects}/$MAX_AUTO_RECONNECTS…")
-                    goForeground("Menyambung ulang…")
-                    publish(TunnelState.Reconnecting, "Menyambung ulang…")
-                    reconnect()
-                    break
-                } else {
-                    fail(failure)
-                    break
+
+                when (decision.verdict) {
+                    ProbeVerdict.KEEP_RETRYING -> {
+                        // Stay connected: a single slow probe is not proof the tunnel is dead.
+                        log("Probe gagal ${decision.failedProbes}/$PROBE_FAIL_LIMIT — tetap tersambung")
+                        continue
+                    }
+                    ProbeVerdict.RECONNECT -> {
+                        log("Reconnect otomatis ${decision.autoReconnects}/$MAX_AUTO_RECONNECTS…")
+                        goForeground("Menyambung ulang…")
+                        publish(TunnelState.Reconnecting, "Menyambung ulang…")
+                        reconnect()
+                        break
+                    }
+                    ProbeVerdict.GIVE_UP -> {
+                        fail(failure)
+                        break
+                    }
                 }
             }
         }
@@ -337,13 +408,31 @@ class PanVpnService : VpnService() {
 
     private fun reconnect() {
         val uri = profiles.activeUri()
-        if (uri.isBlank()) { disconnect(userInitiated = false); return }
+        if (uri.isBlank()) { disconnect(); return }
         synchronized(lock) {
             closeCoreLocked()
             running = false
             connecting = true
         }
         scope.launch { connect(uri, settingsRepo.load()) }
+    }
+
+    /**
+     * One retry before a probe is counted as a failure.
+     *
+     * Mobile networks drop a single packet often enough that a bare probe produces false
+     * negatives; a second attempt two seconds later filters that noise out.
+     */
+    private suspend fun probeWithRetry(): String? {
+        val first = verifyTunnel() ?: return null   // healthy: nothing to retry
+        delay(PROBE_RETRY_GAP_MS)
+        if (!synchronized(lock) { running }) return null
+        val second = verifyTunnel()
+        if (second == null) {
+            log("Probe gagal sekali, retry berhasil")
+            return null
+        }
+        return second.ifBlank { first }
     }
 
     private fun verifyTunnel(): String? {
@@ -392,11 +481,12 @@ class PanVpnService : VpnService() {
         stopSelf()
     }
 
-    private fun disconnect(userInitiated: Boolean) {
+    private fun disconnect() {
         synchronized(lock) {
             connecting = false
             running = false
             terminalFailure = false
+            reconnecting = false
         }
         probeJob?.cancel()
         pingJob?.cancel()
@@ -434,12 +524,22 @@ class PanVpnService : VpnService() {
                 .addDnsServer("1.1.1.1")
                 .addDnsServer("8.8.8.8")
 
-            runCatching { builder.addDisallowedApplication(packageName) }
+            // Android forbids mixing allow and disallow lists on one builder, so the exact set
+            // is decided up-front by VpnAppRules (allowlist OR blocklist, never both).
+            val splitError = applySplitTunnel(builder)
+            if (splitError != null) {
+                log("TUN gagal: $splitError")
+                return -1
+            }
 
             return try {
                 val descriptor = builder.establish()
                 if (descriptor == null) {
-                    log("TUN gagal: izin VPN dicabut / VPN lain aktif")
+                    // establish() returns null for three very different causes; guessing wrong
+                    // sends the user to the wrong Settings screen.
+                    val reason = diagnoseEstablishFailure()
+                    Log.e(TAG, "establish() null: $reason")
+                    log("TUN gagal: $reason")
                     -1
                 } else {
                     tun = descriptor
@@ -496,19 +596,21 @@ class PanVpnService : VpnService() {
         override fun writeLog(message: String?) {
             val line = message ?: return
             Log.i("libbox", line)
-            if (!settingsRepo.load().debugMode) return
             val now = System.currentTimeMillis()
             if (now - lastCoreLogAt < CORE_LOG_THROTTLE_MS) return
-            val lower = line.lowercase()
-            if (lower.contains("ws closed: 1006")) return // expected when a WS stream ends
-            val interesting = lower.contains("error") || lower.contains("warn") ||
-                lower.contains("fatal") || lower.contains("refused") ||
-                lower.contains("timeout") || lower.contains("reset by peer") ||
-                (connecting && (lower.contains("dial") || lower.contains("vless") ||
-                    lower.contains("tls") || lower.contains("websocket")))
-            if (!interesting) return
+            val kind = NetworkErrorClassifier.classify(line, connecting)
+            if (kind == ErrorKind.IGNORE) return
             lastCoreLogAt = now
-            log("core: ${stripAnsi(line).take(110)}")
+            // 160 chars: the actual reason ("connection reset by peer") sits at the end of the line
+            // and used to be cut off by the old 110-char limit.
+            log("core: ${stripAnsi(line).take(160)}", kind)
+
+            // A burst of dead-connection errors means the WebSocket died and the open flows are
+            // stuck. Rebuild before the user notices their apps have no internet.
+            if (kind == ErrorKind.TRANSIENT && transientMonitor.record(now)) {
+                transientMonitor.reset()
+                reconnectAfterTransportFailure()
+            }
         }
     }
 
@@ -557,8 +659,16 @@ class PanVpnService : VpnService() {
             if (!caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_VPN)) return
             val name = link.interfaceName ?: return
             val item = runCatching { java.net.NetworkInterface.getByName(name) }.getOrNull()
+            // A network can disappear between the callback and this lookup (cellular handover
+            // renames rmnet_data*). Handing sing-box an unresolvable name makes it log
+            // "find updated interface: no such network interface" and drop its binding, so keep
+            // the last good interface instead.
+            if (item == null) {
+                Log.w(TAG, "interface $name tidak ditemukan, lewati update")
+                return
+            }
             val metered = !caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED)
-            listener.updateDefaultInterface(name, item?.index ?: 0, metered, false)
+            listener.updateDefaultInterface(name, item.index, metered, false)
         }.onFailure { Log.w(TAG, "report network", it) }
     }
 
@@ -578,15 +688,11 @@ class PanVpnService : VpnService() {
         )
     }
 
-    private fun log(line: String) {
+    private fun log(line: String, kind: ErrorKind = ErrorKind.IGNORE) {
         if (line.isBlank()) return
-        val snapshot = synchronized(logLines) {
-            logLines.addLast(line)
-            while (logLines.size > MAX_LOG_LINES) logLines.removeFirst()
-            logLines.toList()
-        }
-        statusStore.writeLog(visibleLines())
-        if (!settingsRepo.load().debugMode) return
+        val label = NetworkErrorClassifier.label(kind)
+        logLines.add(if (label.isEmpty()) line else "$line ($label)", System.currentTimeMillis())
+        persistLog()
         TunnelBus.publish(
             TunnelBus.Event(
                 state = baseState,
@@ -599,24 +705,51 @@ class PanVpnService : VpnService() {
 
     /** Keep-alive result line. Always rendered: this is the honest "tunnel still alive" signal. */
     private fun pushPingLine(line: String) {
-        synchronized(statusLines) {
-            statusLines.addLast("$line ${timestamp()}")
-            while (statusLines.size > MAX_PING_LINES) statusLines.removeFirst()
-        }
-        statusStore.writeLog(visibleLines())
+        statusLines.add("$line ${timestamp()}", System.currentTimeMillis())
+        persistLog()
         publish(baseState, baseDetail)
     }
 
-    /** What the status box shows: keep-alive lines always, debug steps only in debug mode. */
-    private fun visibleLines(): List<String> = buildList {
-        synchronized(statusLines) { addAll(statusLines) }
-        if (settingsRepo.load().debugMode) {
-            synchronized(logLines) { addAll(logLines) }
-        }
+    /** What the status box shows. Both halves expire, so the box reflects the present only. */
+    private fun visibleLines(): List<String> {
+        val now = System.currentTimeMillis()
+        return statusLines.recent(now, PING_TTL_MS) + logLines.recent(now, LOG_TTL_MS)
     }
 
-    private fun clearStatusLines() {
-        synchronized(statusLines) { statusLines.clear() }
+    private fun clearStatusLines() = statusLines.clear()
+
+    /**
+     * Throttled status write. The ping loop fires every few seconds and every call used to hit
+     * SharedPreferences; this keeps the box current without writing on each tick.
+     */
+    private fun persistLog() {
+        val now = System.currentTimeMillis()
+        if (now - lastLogWriteAt < LOG_WRITE_THROTTLE_MS) return
+        lastLogWriteAt = now
+        statusStore.writeLog(visibleLines())
+    }
+
+    /**
+     * Rebuilds the tunnel after the transport dies underneath the open flows.
+     *
+     * The HTTP probe cannot detect this on its own: it opens a fresh socket to the local proxy and
+     * succeeds even while every existing flow is wedged on a dead WebSocket. Reconnecting drops
+     * those flows and they are re-established on a new socket.
+     */
+    private fun reconnectAfterTransportFailure() {
+        val proceed = synchronized(lock) {
+            if (!running || reconnecting || connecting) return@synchronized false
+            reconnecting = true
+            true
+        }
+        if (!proceed) return
+        log("Transport mati — menyambung ulang", ErrorKind.FATAL)
+        scope.launch {
+            goForeground("Menyambung ulang…")
+            publish(TunnelState.Reconnecting, "Menyambung ulang…")
+            reconnect()
+            synchronized(lock) { reconnecting = false }
+        }
     }
 
     private fun timestamp(): String =
@@ -641,6 +774,57 @@ class PanVpnService : VpnService() {
             baseRx = meterBaseRx,
             baseTx = meterBaseTx,
         )
+    }
+
+    /** Distinguishes "no consent" from "another VPN is active" so the message is actionable. */
+    private fun diagnoseEstablishFailure(): String {
+        val consentMissing = android.net.VpnService.prepare(this) != null
+        // Active network already carrying a VPN transport means another client owns the tunnel.
+        val anotherVpn = runCatching {
+            val cm = getSystemService(ConnectivityManager::class.java)
+            val active = cm?.activeNetwork ?: return@runCatching false
+            cm.getNetworkCapabilities(active)
+                ?.hasTransport(NetworkCapabilities.TRANSPORT_VPN) == true
+        }.getOrDefault(false)
+
+        return when {
+            consentMissing -> "izin VPN belum diberikan — buka ulang aplikasi lalu setujui"
+            anotherVpn -> "VPN lain sedang aktif — matikan dulu VPN lain"
+            else -> "TUN ditolak sistem — cek Always-on VPN di Pengaturan"
+        }
+    }
+
+    /**
+     * Applies the split-tunnel selection to the TUN builder.
+     *
+     * @return null on success, or a user-facing error message. Android rejects mixing
+     *   `addAllowedApplication` with `addDisallowedApplication`, so exactly one list is applied;
+     *   a rejected package is reported instead of being swallowed.
+     */
+    private fun applySplitTunnel(builder: Builder): String? {
+        val split = settingsRepo.load().splitTunnel.sanitized(packageName)
+        val rules = VpnAppRules.forSplit(split, packageName)
+
+        var applied = 0
+        for (pkg in rules.allowed) {
+            val error = runCatching { builder.addAllowedApplication(pkg) }.exceptionOrNull()
+            if (error == null) applied++ else Log.w(TAG, "allow $pkg failed", error)
+        }
+        for (pkg in rules.disallowed) {
+            val error = runCatching { builder.addDisallowedApplication(pkg) }.exceptionOrNull()
+            if (error == null) applied++ else Log.w(TAG, "disallow $pkg failed", error)
+        }
+
+        // If the user picked a list but nothing could be bound, the tunnel would silently behave
+        // as "everything through VPN" — refuse instead of lying.
+        if (split.isActive && applied == 0) {
+            return "split tunnel gagal diterapkan — tidak ada aplikasi yang bisa diikat"
+        }
+        if (split.isActive) {
+            val mode = if (split.allowMode) "hanya" else "kecuali"
+            log("split tunnel: $mode $applied app")
+        }
+        return null
     }
 
     private fun resolveIpv4(host: String): String = runCatching {
@@ -753,12 +937,18 @@ class PanVpnService : VpnService() {
         private const val RECOVER_PROBE_MS = 30_000L
         private const val NETWORK_EVENT_PROBE_DELAY_MS = 2_000L
         private const val PROBE_ATTEMPTS = 3
+        private const val PROBE_RETRY_GAP_MS = 2_000L
         private const val PROBE_GAP_MS = 1_500L
         private const val PROBE_FAIL_LIMIT = 3
         private const val MAX_AUTO_RECONNECTS = 3
         private const val CORE_LOG_THROTTLE_MS = 200L
-        private const val MAX_LOG_LINES = 16
-        private const val MAX_PING_LINES = 5
+        private const val MAX_LOG_LINES = 10
+        private const val MAX_PING_LINES = 3
+
+        /** How long an entry stays in the status box before it ages out. */
+        private const val LOG_TTL_MS = 60_000L
+        private const val PING_TTL_MS = 30_000L
+        private const val LOG_WRITE_THROTTLE_MS = 1_500L
 
         private const val HEALTH_URL = "https://www.gstatic.com/generate_204"
 
@@ -773,10 +963,20 @@ class PanVpnService : VpnService() {
             }
         }
 
+        /**
+         * Asks the running service to disconnect.
+         *
+         * When the service is already gone, `startService` can throw (Android 8+ refuses a
+         * background service start). That exception used to escape the click listener and the UI
+         * stayed frozen on the previous state, so the board is cleared here as a fallback.
+         */
         fun stop(context: Context) {
-            context.startService(
-                Intent(context, PanVpnService::class.java).setAction(ACTION_STOP),
-            )
+            val intent = Intent(context, PanVpnService::class.java).setAction(ACTION_STOP)
+            val delivered = runCatching { context.startService(intent) }.isSuccess
+            if (delivered) return
+            Log.w(TAG, "stop: service unreachable, clearing status board")
+            runCatching { TunnelStatusStore(context).clearSession() }
+            TunnelBus.publish(TunnelBus.Event(state = TunnelState.Idle))
         }
     }
 }

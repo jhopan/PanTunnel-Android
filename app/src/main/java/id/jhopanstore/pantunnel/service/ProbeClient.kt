@@ -64,6 +64,11 @@ class ProbeClient(
     }
 
     companion object {
-        const val DEFAULT_TIMEOUT_MS = 5_000
+        /**
+         * Must stay below sing-box's own dial deadline (~15 s) but well above a slow mobile
+         * handshake. At 5 s the probe gave up before the core did and produced false failures —
+         * the tunnel was reported dead while it was still connecting.
+         */
+        const val DEFAULT_TIMEOUT_MS = 12_000
     }
 }

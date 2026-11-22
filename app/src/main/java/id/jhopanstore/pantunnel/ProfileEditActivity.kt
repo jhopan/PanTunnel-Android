@@ -108,7 +108,6 @@ class ProfileEditActivity : AppCompatActivity() {
         val stored = profiles.edit { editing ->
             val saved = editing.put(Profile.fromConfig(targetId, finalName, config))
             if (saved) editing.setActive(targetId)
-            saved
         }
         if (stored.get(targetId) == null) {
             toast("Maksimal ${ProfileBook.MAX_PROFILES} profil")

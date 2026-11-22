@@ -2,6 +2,7 @@ package id.jhopanstore.pantunnel.core
 
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -66,6 +67,83 @@ class SingboxConfigTest {
         val route = build().getJSONObject("route")
         assertEquals("proxy", route.getString("final"))
         assertTrue(route.getBoolean("override_android_vpn"))
+    }
+
+    @Test
+    fun `tun does not claim an ipv6 address`() {
+        val tun = build().getJSONArray("inbounds").getJSONObject(0)
+        assertFalse(tun.has("inet6_address"))
+    }
+
+    @Test
+    fun `outbound dials ipv4 only`() {
+        val proxy = build().getJSONArray("outbounds").getJSONObject(0)
+        assertEquals(
+            "ipv4_only must replace prefer_ipv4, otherwise AAAA lookups still return",
+            "ipv4_only",
+            proxy.getString("domain_strategy"),
+        )
+    }
+
+    @Test
+    fun `every dns server answers ipv4 only`() {
+        val servers = build().getJSONObject("dns").getJSONArray("servers")
+        val withStrategy = (0 until servers.length())
+            .map { servers.getJSONObject(it) }
+            .filter { it.has("strategy") }
+        assertTrue("expected at least one dns server with a strategy", withStrategy.isNotEmpty())
+        withStrategy.forEach {
+            assertEquals("ipv4_only", it.getString("strategy"))
+        }
+    }
+
+    @Test
+    fun `no dns server keeps a prefer strategy`() {
+        val servers = build().getJSONObject("dns").getJSONArray("servers")
+        (0 until servers.length()).forEach { i ->
+            val server = servers.getJSONObject(i)
+            if (server.has("strategy")) {
+                assertFalse(
+                    "prefer_ipv4 still leaks AAAA records through to apps",
+                    server.getString("strategy").startsWith("prefer_"),
+                )
+            }
+        }
+    }
+
+    @Test
+    fun `dns rule comes before the lan bypass so lookups are not sent direct`() {
+        val first = build().getJSONObject("route").getJSONArray("rules").getJSONObject(0)
+        assertEquals("dns", first.getString("protocol"))
+        assertEquals("dns-out", first.getString("outbound"))
+    }
+
+    @Test
+    fun `private ranges bypass the tunnel`() {
+        val rules = build().getJSONObject("route").getJSONArray("rules")
+        val bypass = (0 until rules.length())
+            .map { rules.getJSONObject(it) }
+            .firstOrNull { it.optString("outbound") == "direct" }
+            ?: throw AssertionError("missing a direct bypass rule for LAN")
+        assertEquals("direct", bypass.getString("outbound"))
+
+        val cidrs = bypass.getJSONArray("ip_cidr")
+        val list = (0 until cidrs.length()).map { cidrs.getString(it) }
+        assertTrue("192.168.0.0/16 missing", list.contains("192.168.0.0/16"))
+        assertTrue("10.0.0.0/8 missing", list.contains("10.0.0.0/8"))
+        assertTrue("172.16.0.0/12 missing", list.contains("172.16.0.0/12"))
+        assertTrue("169.254.0.0/16 missing", list.contains("169.254.0.0/16"))
+    }
+
+    @Test
+    fun `lan bypass does not replace the final outbound`() {
+        assertEquals("proxy", build().getJSONObject("route").getString("final"))
+    }
+
+    @Test
+    fun `connect timeout is explicit`() {
+        val proxy = build().getJSONArray("outbounds").getJSONObject(0)
+        assertEquals("8s", proxy.getString("connect_timeout"))
     }
 
     @Test

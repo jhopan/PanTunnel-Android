@@ -33,8 +33,7 @@
             android:textColor="@color/text_primary"
             android:textSize="14sp"
             android:textStyle="bold" />
-
-        <TextView
+<TextView
             android:id="@+id/cardAddress"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"

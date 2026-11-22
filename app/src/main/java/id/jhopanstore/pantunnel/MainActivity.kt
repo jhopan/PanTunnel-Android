@@ -23,11 +23,14 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.lifecycleScope
 import androidx.lifecycle.repeatOnLifecycle
 import androidx.recyclerview.widget.LinearLayoutManager
+import id.jhopanstore.pantunnel.core.CacheJanitor
+import id.jhopanstore.pantunnel.core.DiagnosticsReport
 import id.jhopanstore.pantunnel.core.License
 import id.jhopanstore.pantunnel.core.LicenseCodec
 import id.jhopanstore.pantunnel.core.Profile
 import id.jhopanstore.pantunnel.core.ProfileBook
 import id.jhopanstore.pantunnel.core.TunnelDiagnostics
+import id.jhopanstore.pantunnel.core.StatusFreshness
 import id.jhopanstore.pantunnel.core.TunnelState
 import id.jhopanstore.pantunnel.core.VlessConfig
 import id.jhopanstore.pantunnel.core.VlessParser
@@ -41,6 +44,7 @@ import id.jhopanstore.pantunnel.databinding.DialogSettingsBinding
 import id.jhopanstore.pantunnel.service.PanVpnService
 import id.jhopanstore.pantunnel.service.TunnelBus
 import id.jhopanstore.pantunnel.service.TunnelStatusStore
+import id.jhopanstore.pantunnel.ui.TrafficMeter
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
@@ -62,6 +66,8 @@ class MainActivity : AppCompatActivity() {
     private lateinit var profiles: ProfileRepository
     private lateinit var settingsRepo: SettingsRepository
     private lateinit var statusStore: TunnelStatusStore
+    private lateinit var meter: TrafficMeter
+    private var stateWasConnected = false
     private lateinit var adapter: ProfileAdapter
 
     private var settings: TunnelSettings = TunnelSettings()
@@ -69,10 +75,14 @@ class MainActivity : AppCompatActivity() {
     private var hwid: String = ""
 
     private var connected = false
-    private var meterBaselineSeeded = false
-    private var lastRx = 0L
-    private var lastTx = 0L
-    private var lastSampleAt = 0L
+
+    /**
+     * Data string of the deep link already consumed. The task keeps its launch intent, and with
+     * `CLEAR_TOP` the system hands that same intent back through [onNewIntent] every time this
+     * activity returns to the top — previously that reopened the editor after each save and
+     * produced duplicate profiles.
+     */
+    private var handledLink: String? = null
 
     private var pendingLicensePayload: String? = null
     private var pendingExportPayload: String? = null
@@ -100,6 +110,23 @@ class MainActivity : AppCompatActivity() {
                 toast("Export gagal: data lisensi hilang, coba lagi")
             }
         }
+
+    /** Diagnostic report — copied to the clipboard, never written to a file. */
+    private fun exportDiagnostics() {
+        val report = buildDiagnosticsReport()
+        if (report.isNullOrBlank()) {
+            toast("Gagal membuat laporan")
+            return
+        }
+        // Clipboard has a practical size ceiling and long text gets truncated by some apps, so
+        // the report is trimmed to MAX_CLIPBOARD_CHARS from the tail (newest lines survive).
+        val trimmed = if (report.length <= MAX_CLIPBOARD_CHARS) {
+            report
+        } else {
+            "…(dipotong)\n" + report.takeLast(MAX_CLIPBOARD_CHARS - 12)
+        }
+        copyToClipboard(trimmed, "Log diagnosa dicopy (${trimmed.length} karakter)")
+    }
 
     /**
      * Plain (unencrypted) .pantunnel: just the vless:// link, importable on any device.
@@ -138,6 +165,7 @@ class MainActivity : AppCompatActivity() {
         profiles = ProfileRepository(this)
         settingsRepo = SettingsRepository(this)
         statusStore = TunnelStatusStore(this)
+        meter = TrafficMeter(statusStore)
         settings = settingsRepo.load()
         hwid = profiles.hwid()
 
@@ -150,7 +178,12 @@ class MainActivity : AppCompatActivity() {
         refreshProfiles()
         loadLicense()
         observeTunnel()
-        handleIncomingIntent(intent)
+        // First creation only: a recreate (configuration change, theme flip) replays this same
+        // intent, and handling it again reopened the editor right after the user saved.
+        if (savedInstanceState == null) {
+            handledLink = intent?.dataString
+            handleIncomingIntent(intent)
+        }
     }
 
     override fun onResume() {
@@ -171,8 +204,13 @@ class MainActivity : AppCompatActivity() {
 
     override fun onNewIntent(intent: Intent?) {
         super.onNewIntent(intent)
+        if (intent == null) return
+        // A redelivered launch intent must not be handled twice (see [handledLink]).
+        val data = intent.dataString
+        if (data != null && data == handledLink) return
+        handledLink = data
         setIntent(intent)
-        intent?.let { handleIncomingIntent(it) }
+        handleIncomingIntent(intent)
     }
 
     override fun onCreateOptionsMenu(menu: Menu): Boolean {
@@ -186,6 +224,11 @@ class MainActivity : AppCompatActivity() {
         R.id.action_export_clipboard -> { copyToClipboard(activeUri(), "Link dicopy"); true }
         R.id.action_export_file -> { exportPlainFile(); true }
         R.id.action_export_license -> { showExportLicenseDialog(); true }
+        R.id.action_export_log -> { exportDiagnostics(); true }
+        R.id.action_split_tunnel -> {
+            startActivity(Intent(this, SplitTunnelActivity::class.java))
+            true
+        }
         R.id.action_settings -> { showSettingsDialog(); true }
         R.id.action_clear -> { confirmClearConfig(); true }
         R.id.action_about -> { showAboutDialog(); true }
@@ -232,13 +275,73 @@ class MainActivity : AppCompatActivity() {
     // ------------------------------------------------------------------ rendering
 
     private fun renderSnapshot(snapshot: TunnelStatusStore.Snapshot) {
-        val state = if (snapshot.isAlive()) snapshot.state else {
-            if (snapshot.state == TunnelState.Connected) TunnelState.Failed else snapshot.state
+        val stale = StatusFreshness.isStale(
+            snapshot.state,
+            snapshot.lastSeen,
+            System.currentTimeMillis(),
+        )
+        val state = if (stale) TunnelState.Failed else snapshot.state
+        val detail = when {
+            stale -> "VPN berhenti — service tidak berjalan lagi."
+            else -> snapshot.detail
         }
-        val detail = if (snapshot.isAlive()) snapshot.detail
-        else if (snapshot.state == TunnelState.Connected) "VPN berhenti — sistem menutup service." else snapshot.detail
         renderState(state, detail, snapshot.logLines)
         license?.let { renderLicenseBanner(it) }
+
+        // Only nag when the tunnel was up and the process died without us tearing it down.
+        if (stale) killedBySystemHint()
+    }
+
+    /**
+     * The service heartbeats every 15s. If the last state was Connected but the heartbeat is
+     * older than [TunnelStatusStore.Snapshot.STALE_AFTER_MS], the OS killed us — the single
+     * most common "VPN mati sendiri" cause on MIUI/HyperOS/ColorOS.
+     */
+    private fun killedBySystemHint() {
+        if (killedHintShown || isFinishing) return
+        killedHintShown = true
+
+        val powerManager = getSystemService(PowerManager::class.java)
+        val ignoring = powerManager?.isIgnoringBatteryOptimizations(packageName) == true
+        val acknowledged = settingsRepo.flag(SettingsRepository.KEY_BATTERY_ACK)
+
+        val message = if (!ignoring && !acknowledged) {
+            "Android atau penghemat daya mematikan VPN saat aplikasi tidak dipakai.\n\n" +
+                "Agar tetap hidup 24/7:\n" +
+                "1. Atur penghemat daya PanTunnel ke \"Tidak dibatasi\"\n" +
+                "2. Kunci aplikasi di Recents (tahan kartu → ikon gembok)\n" +
+                "3. Jangan swipe aplikasi dari Recents"
+        } else {
+            "Penghemat daya sudah diatur, tapi VPN tetap berhenti.\n\n" +
+                "Di MIUI/HyperOS/ColorOS, langkah paling efektif:\n" +
+                "1. Kunci aplikasi di Recents (tahan kartu → ikon gembok)\n" +
+                "2. Izinkan Autostart (Settings → Apps → PanTunnel)\n" +
+                "3. Jangan swipe aplikasi dari Recents"
+        }
+
+        AlertDialog.Builder(this)
+            .setTitle("VPN dimatikan sistem")
+            .setMessage(message)
+            .setPositiveButton("Buka penghemat daya") { _, _ -> openBatterySetting() }
+            .setNegativeButton("Tutup", null)
+            .show()
+    }
+
+    private fun openBatterySetting() {
+        runCatching {
+            startActivity(
+                Intent(
+                    android.provider.Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                    Uri.parse("package:$packageName"),
+                ),
+            )
+        }.onFailure {
+            runCatching {
+                startActivity(
+                    Intent(android.provider.Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS),
+                )
+            }
+        }
     }
 
     private fun renderState(state: TunnelState, detail: String, logLines: List<String>) {
@@ -253,7 +356,10 @@ class MainActivity : AppCompatActivity() {
 
         connected = state.isActive
         binding.connect.text = getString(if (connected) R.string.disconnect else R.string.connect)
-        binding.connect.isEnabled = !state.isBusy
+        // Always tappable. While Connecting/Checking the label already reads "DISCONNECT", and
+        // that tap is the only way out of a slow handshake. Disabling it on !isBusy left users
+        // staring at a button that said DISCONNECT but did nothing.
+        binding.connect.isEnabled = true
         binding.connect.backgroundTintList = ContextCompat.getColorStateList(
             this,
             if (connected) R.color.danger else R.color.accent,
@@ -279,9 +385,14 @@ class MainActivity : AppCompatActivity() {
         )
 
         if (state == TunnelState.Idle || state == TunnelState.Failed) {
-            meterBaselineSeeded = false
+            meter.clear()
             binding.traffic.text = getString(R.string.traffic_placeholder)
+        } else if (state == TunnelState.Connected && !stateWasConnected) {
+            // Only a real transition seeds a new baseline; doing it on every repaint made the
+            // speed read "0 B/s" forever because two samples never spanned an interval.
+            meter.reset()
         }
+        stateWasConnected = state == TunnelState.Connected
     }
 
     private fun renderLicenseBanner(license: License) {
@@ -314,38 +425,8 @@ class MainActivity : AppCompatActivity() {
     }
 
     private fun updateTraffic() {
-        val snapshot = statusStore.snapshot()
-        val uid = Process.myUid()
-        val rx = android.net.TrafficStats.getUidRxBytes(uid)
-        val tx = android.net.TrafficStats.getUidTxBytes(uid)
-        if (rx < 0 || tx < 0) return
-
-        val now = System.currentTimeMillis()
-        val baseRx = snapshot.meterBaseRx
-        val baseTx = snapshot.meterBaseTx
-        val sessionRx = if (baseRx >= 0 && rx >= baseRx) rx - baseRx else snapshot.sessionRx
-        val sessionTx = if (baseTx >= 0 && tx >= baseTx) tx - baseTx else snapshot.sessionTx
-
-        var downRate = 0L
-        var upRate = 0L
-        if (!meterBaselineSeeded) {
-            lastRx = rx; lastTx = tx; lastSampleAt = now
-            meterBaselineSeeded = true
-        } else {
-            val elapsed = (now - lastSampleAt).coerceAtLeast(1L)
-            downRate = ((rx - lastRx).coerceAtLeast(0L)) * 1000 / elapsed
-            upRate = ((tx - lastTx).coerceAtLeast(0L)) * 1000 / elapsed
-            lastRx = rx; lastTx = tx; lastSampleAt = now
-        }
-
-        binding.traffic.text = "↓ ${formatBytes(sessionRx)} (${formatBytes(downRate)}/s)" +
-            "   ↑ ${formatBytes(sessionTx)} (${formatBytes(upRate)}/s)"
-    }
-
-    private fun formatBytes(value: Long): String = when {
-        value < 1024 -> "$value B"
-        value < 1024 * 1024 -> String.format(Locale.US, "%.1f KB", value / 1024.0)
-        else -> String.format(Locale.US, "%.2f MB", value / (1024.0 * 1024.0))
+        val reading = meter.sample() ?: return
+        binding.traffic.text = reading.format()
     }
 
     // ------------------------------------------------------------------ profiles
@@ -620,6 +701,25 @@ class MainActivity : AppCompatActivity() {
         exportFileLauncher.launch("$name.pantunnel")
     }
 
+    /** Rebuildable on demand so an activity recreation cannot produce an empty file. */
+    private fun buildDiagnosticsReport(): String? {
+        val snapshot = statusStore.snapshot()
+        val profile = profiles.activeProfile()
+        val summary = profile?.let {
+            val config = runCatching { VlessParser.parse(it.toUri()) }.getOrNull()
+            if (config == null) {
+                "${it.displayName} (belum ada config)"
+            } else {
+                "${it.displayName} • ${config.address}:${config.port} • " +
+                    "uuid ${DiagnosticsReport.redactUuid(config.uuid)} • path ${config.path} • sni ${config.sni}"
+            }
+        } ?: "(tidak ada profil aktif)"
+
+        return runCatching { DiagnosticsReport.build(this, snapshot, summary) }
+            .onFailure { toast("Gagal membuat laporan: ${it.javaClass.simpleName}") }
+            .getOrNull()
+    }
+
     private fun openImportFile() {
         runCatching { importFileLauncher.launch(arrayOf(JVS_MIME)) }
             .onFailure { importFileLauncher.launch(arrayOf("text/plain", "*/*")) }
@@ -684,7 +784,6 @@ class MainActivity : AppCompatActivity() {
         form.setPingUrl.setText(current.httpPingUrl)
         form.setTraffic.isChecked = current.showTraffic
         form.setAutoReconnect.isChecked = current.autoReconnect
-        form.setDebug.isChecked = current.debugMode
         applyPingFormState(form, current.httpPingEnabled)
         form.setPing.setOnCheckedChangeListener { _, checked -> applyPingFormState(form, checked) }
 
@@ -701,7 +800,6 @@ class MainActivity : AppCompatActivity() {
                 httpPingIntervalSeconds = seconds.coerceAtLeast(1),
                 httpPingUrl = pingUrl,
                 showTraffic = form.setTraffic.isChecked,
-                debugMode = form.setDebug.isChecked,
                 autoReconnect = form.setAutoReconnect.isChecked,
             )
             settingsRepo.save(updated)
@@ -744,6 +842,7 @@ class MainActivity : AppCompatActivity() {
             .setMessage("Hapus semua profil, config, dan lisensi?")
             .setPositiveButton("Hapus") { _, _ ->
                 profiles.clearConfig()
+                CacheJanitor.clear(filesDir)
                 license = null
                 binding.lockBanner.visibility = android.view.View.GONE
                 refreshProfiles()
@@ -783,7 +882,10 @@ class MainActivity : AppCompatActivity() {
                     }
                 }
             }
-            .setNegativeButton("Nanti", null)
+            .setNegativeButton("Nanti") { _, _ ->
+                // Remember the dismissal, otherwise this prompt returns on every launch.
+                settingsRepo.setFlag(SettingsRepository.KEY_BATTERY_ACK, true)
+            }
             .show()
     }
 
@@ -802,10 +904,13 @@ class MainActivity : AppCompatActivity() {
 
     private companion object {
         const val JVS_MIME = "application/x-pantunnel"
+        /** Keeps the copied report well under clipboard limits while staying useful. */
+        const val MAX_CLIPBOARD_CHARS = 4_000
         const val TRAFFIC_TICK_MS = 2_000L
         const val RECONNECT_AFTER_SWITCH_MS = 1_500L
     }
 
     private var batteryGuardShown = false
+    private var killedHintShown = false
     private var trafficJob: Job? = null
 }

@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
@@ -7,6 +8,16 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS" />
+
+    <!--
+      Split tunnel must list every installed app. Since Android 11 (API 30) package visibility
+      hides third-party apps from getInstalledApplications() unless the app holds this
+      permission, which made the picker show system apps only. VPN clients are an explicitly
+      permitted use case for QUERY_ALL_PACKAGES.
+    -->
+    <uses-permission
+        android:name="android.permission.QUERY_ALL_PACKAGES"
+        tools:ignore="QueryAllPackagesPermission" />
 
     <application
         android:allowBackup="false"
@@ -54,6 +65,12 @@
             android:name=".ProfileEditActivity"
             android:exported="false"
             android:windowSoftInputMode="stateAlwaysHidden" />
+
+        <activity
+            android:name=".SplitTunnelActivity"
+            android:exported="false"
+            android:label="Split tunnel"
+            android:windowSoftInputMode="adjustResize" />
 
         <service
             android:name=".service.PanVpnService"

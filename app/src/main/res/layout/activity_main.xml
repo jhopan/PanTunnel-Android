@@ -40,7 +40,7 @@
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
-                android:text="Belum ada config"
+                android:text="@string/empty_no_config"
                 android:textColor="@color/text_primary"
                 android:textSize="17sp"
                 android:textStyle="bold" />
@@ -50,7 +50,7 @@
                 android:layout_height="wrap_content"
                 android:layout_marginTop="6dp"
                 android:gravity="center"
-                android:text="Import link vless:// dari clipboard\natau tambah profil manual."
+                android:text="@string/empty_hint"
                 android:textColor="@color/text_secondary"
                 android:textSize="13sp" />
         </LinearLayout>

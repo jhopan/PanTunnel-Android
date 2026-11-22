@@ -19,4 +19,31 @@
     <string name="edit">Edit</string>
     <string name="settings">Pengaturan</string>
     <string name="about">About</string>
+    <string name="split_enable">Aktifkan split tunnel</string>
+    <string name="split_mode_block">App terpilih DILEWATKAN (langsung, tanpa VPN)</string>
+    <string name="set_auto_reconnect">Auto-reconnect saat koneksi putus</string>
+    <string name="lic_create">BUAT FILE</string>
+    <string name="empty_no_config">Belum ada config</string>
+    <string name="splash_by">By JhopanStore</string>
+    <string name="set_copy_hwid">Copy HWID</string>
+    <string name="set_hwid_label">Device HWID</string>
+    <string name="lic_hwid_label">HWID pembeli (24 karakter)</string>
+    <string name="split_mode_allow">Hanya app terpilih yang LEWAT VPN</string>
+    <string name="empty_hint">Import link vless:// dari clipboard
+atau tambah profil manual.</string>
+    <string name="set_ping_interval">Interval ping (detik)</string>
+    <string name="set_ping_enable">Keep-alive HTTP ping saat terhubung</string>
+    <string name="edit_hint">Kosongkan SNI/Host untuk memakai address. Hanya VLESS + WebSocket + TLS yang didukung.</string>
+    <string name="lic_lock">Kunci config (sembunyikan config di HP pembeli)</string>
+    <string name="lic_expiry_label">Masa berlaku (kosong = selamanya)</string>
+    <string name="lic_name_label">Nama config</string>
+    <string name="settings_title">Pengaturan</string>
+    <string name="set_traffic">Tampilkan traffic meter</string>
+    <string name="about_telegram">Telegram</string>
+    <string name="set_ping_url">URL ping</string>
+    <string name="splash_tagline">VLESS • WS • TLS</string>
+    <string name="about_tagline">VLESS • WebSocket • TLS
+Ringan, stabil, 24/7.</string>
+    <string name="lic_expiry_hint">dd/mm/yyyy (kosong = selamanya)</string>
+    <string name="about_website">jhopanstore.my.id</string>
 </resources>

@@ -2,6 +2,7 @@ package id.jhopanstore.pantunnel.service
 
 import android.content.Context
 import android.content.SharedPreferences
+import id.jhopanstore.pantunnel.core.StatusFreshness
 import id.jhopanstore.pantunnel.core.TunnelState
 
 /**
@@ -29,10 +30,10 @@ class TunnelStatusStore(context: Context) {
     ) {
         /** True when the service heartbeated recently; guards against a killed process. */
         fun isAlive(now: Long = System.currentTimeMillis()): Boolean =
-            state == TunnelState.Connected && now - lastSeen < STALE_AFTER_MS
+            StatusFreshness.isAlive(state, lastSeen, now)
 
         companion object {
-            const val STALE_AFTER_MS = 35_000L
+            const val STALE_AFTER_MS = StatusFreshness.STALE_AFTER_MS
         }
     }
 

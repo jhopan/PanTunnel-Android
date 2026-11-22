@@ -35,7 +35,7 @@
         android:layout_height="wrap_content"
         android:layout_marginTop="12dp"
         android:gravity="center"
-        android:text="VLESS • WebSocket • TLS\nRingan, stabil, 24/7."
+        android:text="@string/about_tagline"
         android:textColor="@color/text_secondary"
         android:textSize="13sp" />
 
@@ -45,7 +45,7 @@
         android:layout_height="46dp"
         android:layout_marginTop="18dp"
         android:backgroundTint="#0088CC"
-        android:text="Telegram"
+        android:text="@string/about_telegram"
         android:textAllCaps="false"
         android:textColor="#FFFFFF" />
 
@@ -55,7 +55,7 @@
         android:layout_height="46dp"
         android:layout_marginTop="8dp"
         android:backgroundTint="@color/accent_dim"
-        android:text="jhopanstore.my.id"
+        android:text="@string/about_website"
         android:textAllCaps="false"
         android:textColor="#FFFFFF" />
 </LinearLayout>

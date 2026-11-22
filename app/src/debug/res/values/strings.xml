@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  Debug builds are a separate install (applicationIdSuffix ".debug") but share the release
+  label, so both icons read "PanTunnel" and the debug one looks missing. Override the label
+  in the debug source set only; the release label stays untouched.
+-->
+<resources>
+    <string name="app_name">PanTunnel Debug</string>
+</resources>

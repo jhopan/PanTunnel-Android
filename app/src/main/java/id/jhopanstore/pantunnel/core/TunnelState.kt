@@ -21,6 +21,10 @@ enum class TunnelState {
 object TunnelDiagnostics {
 
     fun fromThrowable(error: Throwable): String {
+        // kotlinx JobCancellationException extends the JDK type, so this covers both.
+        if (error is java.util.concurrent.CancellationException) {
+            return "Koneksi dibatalkan."
+        }
         val message = error.message.orEmpty().lowercase()
         return when {
             error is java.net.UnknownHostException ->

@@ -98,7 +98,7 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginTop="16dp"
-                android:text="Kosongkan SNI/Host untuk memakai address. Hanya VLESS + WebSocket + TLS yang didukung."
+                android:text="@string/edit_hint"
                 android:textColor="@color/text_muted"
                 android:textSize="11sp" />
 

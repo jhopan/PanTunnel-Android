@@ -22,6 +22,19 @@ object SingboxConfig {
     private const val DNS_PRIMARY = "1.1.1.1"
     private const val DNS_BACKUP = "8.8.8.8"
 
+    /** Private ranges that must never enter the tunnel. */
+    private val LAN_CIDRS = listOf(
+        "10.0.0.0/8",
+        "172.16.0.0/12",
+        "192.168.0.0/16",
+        "169.254.0.0/16",
+    )
+
+    /** sing-box `<domain>_strategy` values; `ipv4_only` also stops AAAA lookups. */
+    private object DNSStrategy {
+        const val IPV4_ONLY = "ipv4_only"
+    }
+
     /**
      * @param verboseLogging raises the core log level to `debug` so dial/TLS/WS steps reach
      *   the in-app log. Production runs at `warn` so nothing accumulates on disk.
@@ -93,7 +106,10 @@ object SingboxConfig {
                         .put("server", config.address)
                         .put("server_port", config.port)
                         .put("uuid", config.uuid)
-                        .put("domain_strategy", "prefer_ipv4")
+                        .put("domain_strategy", DNSStrategy.IPV4_ONLY)
+                        // Explicit, shorter than the 15 s default: fail fast so the probe and the
+                        // core agree, instead of the probe timing out while the dial still hangs.
+                        .put("connect_timeout", "8s")
                         .put("tls", tls)
                         .put("transport", ws),
                 )
@@ -105,11 +121,24 @@ object SingboxConfig {
         root.put(
             "route",
             JSONObject()
+                // Left off on purpose: it is a Linux/Windows/macOS option, and on Android it also
+                // pairs with override_android_vpn to bind dials to the VPN NIC, which loops when
+                // our own UID is inside the tunnel (allowlist split tunnel). See VpnAppRules: our
+                // package is kept outside the VPN in both split modes instead.
                 .put("auto_detect_interface", false)
                 .put("override_android_vpn", true)
                 .put(
                     "rules",
-                    JSONArray().put(JSONObject().put("protocol", "dns").put("outbound", "dns-out")),
+                    JSONArray()
+                        .put(JSONObject().put("protocol", "dns").put("outbound", "dns-out"))
+                        // RFC1918 + link-local stay on the physical interface. Without this the
+                        // router admin page, printers, Chromecast and IP cameras are sent to the
+                        // VLESS server and simply time out while the VPN is up.
+                        .put(
+                            JSONObject()
+                                .put("ip_cidr", JSONArray(LAN_CIDRS.toList()))
+                                .put("outbound", "direct"),
+                        ),
                 )
                 .put("final", "proxy"),
         )
@@ -125,8 +154,14 @@ object SingboxConfig {
         return root.toString()
     }
 
+    /**
+     * [DNSStrategy.IPV4_ONLY] is deliberate: it stops AAAA records from being returned at all.
+     * With `prefer_ipv4` the resolver still answers AAAA, apps happily open IPv6 connections, and
+     * because the TUN only claims `0.0.0.0/0` those connections bypass the tunnel (leak) or hang
+     * until the fallback timer expires. Answering A only keeps every flow inside the tunnel.
+     */
     private fun dnsServer(tag: String, address: String): JSONObject = JSONObject()
         .put("tag", tag)
         .put("address", address)
-        .put("strategy", "prefer_ipv4")
+        .put("strategy", DNSStrategy.IPV4_ONLY)
 }

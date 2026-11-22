@@ -13,7 +13,7 @@
         <TextView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="Pengaturan"
+            android:text="@string/settings_title"
             android:textColor="@color/text_primary"
             android:textSize="18sp"
             android:textStyle="bold" />
@@ -24,13 +24,13 @@
             android:layout_height="wrap_content"
             android:layout_marginTop="16dp"
             android:buttonTint="@color/accent"
-            android:text="Keep-alive HTTP ping saat terhubung"
+            android:text="@string/set_ping_enable"
             android:textColor="@color/text_secondary"
             android:textSize="13sp" />
 
         <TextView style="@style/PanTunnelFieldLabel" android:layout_width="match_parent"
             android:layout_height="wrap_content" android:layout_marginTop="14dp"
-            android:text="Interval ping (detik)" />
+            android:text="@string/set_ping_interval" />
         <EditText
             android:id="@+id/setPingInterval"
             style="@style/PanTunnelField"
@@ -41,7 +41,7 @@
 
         <TextView style="@style/PanTunnelFieldLabel" android:layout_width="match_parent"
             android:layout_height="wrap_content" android:layout_marginTop="14dp"
-            android:text="URL ping" />
+            android:text="@string/set_ping_url" />
         <EditText
             android:id="@+id/setPingUrl"
             style="@style/PanTunnelField"
@@ -56,7 +56,7 @@
             android:layout_height="wrap_content"
             android:layout_marginTop="14dp"
             android:buttonTint="@color/accent"
-            android:text="Tampilkan traffic meter"
+            android:text="@string/set_traffic"
             android:textColor="@color/text_secondary"
             android:textSize="13sp" />
 
@@ -66,23 +66,13 @@
             android:layout_height="wrap_content"
             android:layout_marginTop="6dp"
             android:buttonTint="@color/accent"
-            android:text="Auto-reconnect saat koneksi putus"
-            android:textColor="@color/text_secondary"
-            android:textSize="13sp" />
-
-        <CheckBox
-            android:id="@+id/setDebug"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginTop="6dp"
-            android:buttonTint="@color/accent"
-            android:text="Mode debug (tampilkan log koneksi)"
+            android:text="@string/set_auto_reconnect"
             android:textColor="@color/text_secondary"
             android:textSize="13sp" />
 
         <TextView style="@style/PanTunnelFieldLabel" android:layout_width="match_parent"
             android:layout_height="wrap_content" android:layout_marginTop="16dp"
-            android:text="Device HWID" />
+            android:text="@string/set_hwid_label" />
         <TextView
             android:id="@+id/setHwid"
             android:layout_width="match_parent"
@@ -101,7 +91,7 @@
             android:layout_height="44dp"
             android:layout_marginTop="8dp"
             android:backgroundTint="@color/bg_surface"
-            android:text="Copy HWID"
+            android:text="@string/set_copy_hwid"
             android:textColor="@color/text_primary" />
 
         <LinearLayout

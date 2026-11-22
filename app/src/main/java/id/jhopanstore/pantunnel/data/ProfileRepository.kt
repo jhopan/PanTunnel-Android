@@ -89,10 +89,6 @@ class ProfileRepository(context: Context) {
         return Hwid.fromInstallId(id)
     }
 
-    fun clearAll() {
-        prefs.edit().clear().apply()
-    }
-
     /**
      * Wipe config + license but keep the install id, so a device that already imported a
      * license does not lose its HWID to a "Clear config".
