@@ -2,12 +2,14 @@
 <!--
   A proxy client must reach plain-HTTP health endpoints: the keep-alive URL is user
   configurable and the confidentiality comes from the tunnel, not the probe.
+
+  Only system trust anchors: trusting user-added CAs would let anyone who can install a
+  certificate intercept the app's own HTTPS (the keep-alive probe), and nothing here needs it.
 -->
 <network-security-config>
     <base-config cleartextTrafficPermitted="true">
         <trust-anchors>
             <certificates src="system" />
-            <certificates src="user" />
         </trust-anchors>
     </base-config>
 </network-security-config>
