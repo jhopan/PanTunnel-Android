@@ -281,6 +281,7 @@ Invariant lain yang tidak boleh dilanggar:
 | Layar mati → probe/ping skip | Hemat baterai; jangan diubah jadi probe terus |
 | Traffic meter reset hanya saat transisi ke `Connected` | Reset tiap ping membaca 0 B/s |
 | Paket sendiri di luar tunnel (kedua mode split) | Kalau di dalam, dial core ke server berbalik ke proxy → timeout |
+| `network_security_config` hanya percaya CA sistem | CA yang dipasang user bisa dipakai mengintersep probe HTTPS app; cleartext tetap diizinkan karena URL ping bisa `http://` |
 | Jaringan hilang → status `Menunggu jaringan`, bukan `Connected` | Jaringan naik lagi → probe lolos → `Connected` otomatis (terukur: degrade 4 s, pulih 11 s) |
 | Budget auto-reconnect tidak dibakar saat device offline | Reconnect tanpa jaringan hanya berakhir `Failed` yang harus di-tap user |
 
