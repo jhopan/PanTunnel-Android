@@ -392,13 +392,12 @@ class PanVpnService : VpnService() {
                         autoReconnects = autoReconnects,
                         limit = PROBE_FAIL_LIMIT,
                         maxReconnects = MAX_AUTO_RECONNECTS,
+                        offline = offline,
                     )
                     failedProbes = d.failedProbes
                     autoReconnects = d.autoReconnects
                     if (d.markUnstable) healthyStable = false
-                    // With no network at all, spending a reconnect only ends in a terminal Failed
-                    // the user has to clear by hand; waiting recovers on its own.
-                    if (d.verdict == ProbeVerdict.RECONNECT && !offline) {
+                    if (d.verdict == ProbeVerdict.RECONNECT) {
                         running = false
                         connecting = true
                     }
@@ -407,15 +406,11 @@ class PanVpnService : VpnService() {
 
                 when (decision.verdict) {
                     ProbeVerdict.KEEP_RETRYING -> {
-                        // Stay connected: a single slow probe is not proof the tunnel is dead.
-                        log("Probe gagal ${decision.failedProbes}/$PROBE_FAIL_LIMIT — tetap tersambung")
+                        if (offline) markWaitingForNetwork()
+                        else log("Probe gagal ${decision.failedProbes}/$PROBE_FAIL_LIMIT — tetap tersambung")
                         continue
                     }
                     ProbeVerdict.RECONNECT -> {
-                        if (offline) {
-                            markWaitingForNetwork()
-                            continue
-                        }
                         log("Reconnect otomatis ${decision.autoReconnects}/$MAX_AUTO_RECONNECTS...")
                         goForeground("Menyambung ulang...")
                         publish(TunnelState.Reconnecting, "Menyambung ulang...")

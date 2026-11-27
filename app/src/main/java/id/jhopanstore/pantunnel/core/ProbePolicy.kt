@@ -36,13 +36,26 @@ object ProbePolicy {
      * @param autoReconnects reconnects already performed in this session
      * @param limit          failures needed before acting
      * @param maxReconnects  reconnect budget
+     * @param offline        the device has no network at all
      */
     fun onFailure(
         failedProbes: Int,
         autoReconnects: Int,
         limit: Int,
         maxReconnects: Int,
+        offline: Boolean = false,
     ): ProbeDecision {
+        if (offline) {
+            // No network: reconnecting would spend the budget without any chance of success, and
+            // giving up would turn into a terminal Failed the user has to clear by hand. Keep the
+            // counters untouched so a passing probe can lift the tunnel again on its own.
+            return ProbeDecision(
+                verdict = ProbeVerdict.KEEP_RETRYING,
+                failedProbes = failedProbes,
+                autoReconnects = autoReconnects,
+                markUnstable = true,
+            )
+        }
         val consecutive = failedProbes + 1
         return when {
             consecutive < limit -> ProbeDecision(

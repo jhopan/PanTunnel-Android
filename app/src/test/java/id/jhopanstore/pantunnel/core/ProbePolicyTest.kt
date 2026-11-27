@@ -108,4 +108,29 @@ class ProbePolicyTest {
         val d = ProbePolicy.onFailure(2, maxReconnects, limit, maxReconnects)
         assertEquals(ProbeVerdict.GIVE_UP, d.verdict)
     }
+
+    // ---------------------------------------------------------------- offline (no network at all)
+
+    @Test
+    fun `offline failure does not spend the reconnect budget`() {
+        val d = ProbePolicy.onFailure(2, 0, limit = 3, maxReconnects = 3, offline = true)
+        assertEquals(ProbeVerdict.KEEP_RETRYING, d.verdict)
+        assertEquals(2, d.failedProbes)
+        assertEquals(0, d.autoReconnects)
+        assertTrue(d.markUnstable)
+    }
+
+    @Test
+    fun `offline never gives up even with the budget exhausted`() {
+        val d = ProbePolicy.onFailure(2, maxReconnects, limit, maxReconnects, offline = true)
+        assertEquals(ProbeVerdict.KEEP_RETRYING, d.verdict)
+        assertEquals(maxReconnects, d.autoReconnects)
+    }
+
+    @Test
+    fun `once online the normal policy applies again`() {
+        val d = ProbePolicy.onFailure(2, 0, limit = 3, maxReconnects = 3, offline = false)
+        assertEquals(ProbeVerdict.RECONNECT, d.verdict)
+        assertEquals(1, d.autoReconnects)
+    }
 }
